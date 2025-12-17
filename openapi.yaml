@@ -1,4 +1,8 @@
 openapi: 3.0.3
+
+x-swagger-ui:
+  supportedSubmitMethods: [get, post, put, delete, patch]
+
 info:
   title: Mini API - Utilisateurs & Votes
   version: 1.0.0
