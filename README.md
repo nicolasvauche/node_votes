@@ -74,7 +74,7 @@ API dispo sur : http://localhost:3000
 ### Actions de vote
 
 - Un utilisateur peut voter **+1 ou -1**
-- Une seule action par jour et par utilisateur
+- Un utilisateur peut voter plusieurs fois mais ne peut pas effectuer deux fois de suite la même action (+1 ou -1)
 - Les actions sont historisées → permet d'afficher un graphe ou une timeline
 - L’API peut renvoyer :
   - le vote en cours

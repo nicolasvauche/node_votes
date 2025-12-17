@@ -5,6 +5,8 @@ info:
   description: >
     API pédagogique pour gérer des utilisateurs (inscription / login) et des sessions de vote
     avec historique des actions. Authentification par JWT stocké dans un cookie HTTPOnly.
+    Un utilisateur peut effectuer plusieurs actions de vote, mais ne peut pas répéter deux fois
+    consécutivement la même action (+1 ou -1).
 
 servers:
   - url: http://localhost:3000
@@ -511,6 +513,9 @@ paths:
     post:
       tags: [Votes (User)]
       summary: Ajoute une action de vote (+1 ou -1) pour le vote ouvert
+      description: >
+        Un utilisateur peut voter plusieurs fois pour un même vote,
+        mais ne peut pas répéter deux fois de suite la même action.
       security:
         - cookieAuth: []
       requestBody:
@@ -531,4 +536,4 @@ paths:
         "401":
           description: Non authentifié
         "403":
-          description: Déjà voté aujourd'hui pour ce vote
+          description: Impossible de répéter deux fois la même action consécutivement

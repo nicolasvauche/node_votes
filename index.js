@@ -349,7 +349,7 @@ app.get("/api/votes/:id/result", async (req, res) => {
   res.json({ voteId: id, total, actionsCount: actions.length });
 });
 
-// User vote (1 action / jour / vote)
+// User vote (plusieurs actions possibles, mais pas deux fois de suite la même)
 app.post("/api/vote", auth(), async (req, res) => {
   const { value } = req.body;
 
@@ -362,18 +362,21 @@ app.post("/api/vote", auth(), async (req, res) => {
     return res.status(400).json({ error: "No open vote" });
   }
 
-  const existing = await getOne(
+  const lastAction = await getOne(
     `
-    SELECT id FROM vote_actions
+    SELECT value FROM vote_actions
     WHERE voteId = ?
       AND userId = ?
-      AND date(createdAt) = date('now')
+    ORDER BY datetime(createdAt) DESC
+    LIMIT 1
   `,
     [vote.id, req.user.id]
   );
 
-  if (existing) {
-    return res.status(403).json({ error: "Already voted today for this vote" });
+  if (lastAction && lastAction.value === value) {
+    return res.status(403).json({
+      error: "Cannot repeat same action consecutively",
+    });
   }
 
   await exec(
