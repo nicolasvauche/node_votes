@@ -37,17 +37,17 @@ mini-api/
 
 ## Initialisation de la base SQLite
 
-`npm run init-db`
+`npm run db:init`
 
 ---
 
 ## Lancer l’API
 
-Mode normal :  
-`npm start`
-
 Mode développement (auto-reload) :  
 `npm run dev`
+
+Mode normal :  
+`npm start`
 
 API dispo sur : http://localhost:3000
 
