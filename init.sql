@@ -48,3 +48,23 @@ VALUES (
         'registrationsClosed',
         'false'
     );
+
+-- --------------------------------------
+-- Admin pré-enregistré
+-- email : admin@example.com
+-- password : admin
+-- --------------------------------------
+
+INSERT INTO
+    users (
+        email,
+        password,
+        role,
+        createdAt
+    )
+VALUES (
+        'admin@example.com',
+        '$2b$10$gHsuYyrPjdvVSxGInxje1uY61zIYEMPEP5fnCVfT1k4NXi3Da6XH2',
+        'admin',
+        datetime('now')
+    );
