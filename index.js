@@ -3,11 +3,16 @@ const sqlite3 = require("sqlite3").verbose();
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const bodyParser = require("body-parser");
+const cookieParser = require("cookie-parser");
+const swaggerUi = require("swagger-ui-express");
+const YAML = require("yamljs");
 
 const app = express();
 app.use(bodyParser.json());
+app.use(cookieParser());
 
 const db = new sqlite3.Database("./db.sqlite");
+const swaggerDocument = YAML.load("./openapi.yaml");
 
 // --------------------------
 // Helpers
@@ -41,11 +46,14 @@ function exec(sql, params = []) {
 
 function auth(requiredRole = null) {
   return async (req, res, next) => {
+    const tokenFromCookie = req.cookies?.token;
     const header = req.headers.authorization;
-    const token =
+    const tokenFromHeader =
       header && header.startsWith("Bearer ")
         ? header.slice("Bearer ".length)
         : null;
+
+    const token = tokenFromCookie || tokenFromHeader;
 
     if (!token) return res.status(401).json({ error: "Unauthorized" });
 
@@ -111,7 +119,6 @@ app.post("/api/register", async (req, res) => {
     );
     res.json({ success: true });
   } catch (e) {
-    // Contrainte d'unicité sur email
     return res.status(400).json({ error: "Email already exists" });
   }
 });
@@ -132,7 +139,23 @@ app.post("/api/login", async (req, res) => {
     { expiresIn: "2h" }
   );
 
-  res.json({ token });
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: false, // true if HTTPS
+    sameSite: "lax",
+    maxAge: 2 * 60 * 60 * 1000, // 2h
+  });
+
+  res.json({
+    success: true,
+    user: { id: user.id, email: user.email, role: user.role },
+  });
+});
+
+// Logout
+app.post("/api/logout", (req, res) => {
+  res.clearCookie("token");
+  res.json({ success: true });
 });
 
 // --------------------------
@@ -220,7 +243,6 @@ app.post("/api/admin/votes/:id/open", auth("admin"), async (req, res) => {
   const existing = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
   if (!existing) return res.status(404).json({ error: "Vote not found" });
 
-  // Check that no other vote is open
   const openVote = await getOne(
     "SELECT * FROM votes WHERE status = 'open' AND id != ?",
     [id]
@@ -270,7 +292,7 @@ app.post("/api/admin/votes/:id/close", auth("admin"), async (req, res) => {
 // Votes – côté utilisateur
 // --------------------------
 
-// Get current open vote (ou null si aucun)
+// Get current open vote
 app.get("/api/votes/current", async (req, res) => {
   const vote = await getOne("SELECT * FROM votes WHERE status = 'open'");
 
@@ -278,7 +300,6 @@ app.get("/api/votes/current", async (req, res) => {
     return res.json(null);
   }
 
-  // On renvoie aussi le score courant
   const actions = await query(
     "SELECT value, createdAt FROM vote_actions WHERE voteId = ? ORDER BY datetime(createdAt) ASC",
     [vote.id]
@@ -292,7 +313,7 @@ app.get("/api/votes/current", async (req, res) => {
   });
 });
 
-// Get full list of actions for a vote (pour tracer un graphique)
+// Get full list of actions for a vote
 app.get("/api/votes/:id/actions", async (req, res) => {
   const { id } = req.params;
 
@@ -330,7 +351,7 @@ app.get("/api/votes/:id/result", async (req, res) => {
 
 // User vote (1 action / jour / vote)
 app.post("/api/vote", auth(), async (req, res) => {
-  const { value } = req.body; // +1 ou -1
+  const { value } = req.body;
 
   if (![+1, -1].includes(value)) {
     return res.status(400).json({ error: "Invalid vote value" });
@@ -341,7 +362,6 @@ app.post("/api/vote", auth(), async (req, res) => {
     return res.status(400).json({ error: "No open vote" });
   }
 
-  // 1 action par jour pour ce vote et cet utilisateur
   const existing = await getOne(
     `
     SELECT id FROM vote_actions
@@ -366,6 +386,15 @@ app.post("/api/vote", auth(), async (req, res) => {
 
   res.json({ success: true });
 });
+
+// Route Swagger UI
+app.use(
+  "/api/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerDocument, {
+    explorer: true,
+  })
+);
 
 // --------------------------
 // Server

@@ -1,0 +1,534 @@
+openapi: 3.0.3
+info:
+  title: Mini API - Utilisateurs & Votes
+  version: 1.0.0
+  description: >
+    API pédagogique pour gérer des utilisateurs (inscription / login) et des sessions de vote
+    avec historique des actions. Authentification par JWT stocké dans un cookie HTTPOnly.
+
+servers:
+  - url: http://localhost:3000
+    description: Serveur local de développement
+
+tags:
+  - name: Auth
+    description: Gestion des utilisateurs et de l'authentification
+  - name: Settings
+    description: Paramètres globaux de l'application
+  - name: Votes (Admin)
+    description: Gestion des sessions de vote côté administrateur
+  - name: Votes (User)
+    description: Actions de vote côté utilisateur
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: token
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [user, admin]
+      required: [id, email, role]
+
+    RegisterRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required: [email, password]
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required: [email, password]
+
+    Settings:
+      type: object
+      additionalProperties:
+        type: string
+      example:
+        registrationsClosed: "false"
+
+    Vote:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [scheduled, open, closed]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    VoteAction:
+      type: object
+      properties:
+        id:
+          type: integer
+        voteId:
+          type: integer
+        userId:
+          type: integer
+        value:
+          type: integer
+          description: +1 ou -1
+        createdAt:
+          type: string
+          format: date-time
+
+    VoteWithStats:
+      type: object
+      properties:
+        vote:
+          $ref: "#/components/schemas/Vote"
+        total:
+          type: integer
+          description: Somme des valeurs de toutes les actions
+        actions:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: integer
+              createdAt:
+                type: string
+                format: date-time
+
+    VoteActionsResponse:
+      type: object
+      properties:
+        vote:
+          $ref: "#/components/schemas/Vote"
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoteAction"
+
+    VoteResult:
+      type: object
+      properties:
+        voteId:
+          type: integer
+        total:
+          type: integer
+        actionsCount:
+          type: integer
+
+    ToggleRegistrationsRequest:
+      type: object
+      properties:
+        value:
+          type: boolean
+      required: [value]
+
+    CreateVoteRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+      required: [title, startsAt, endsAt]
+
+    UpdateVoteRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+
+    VoteRequest:
+      type: object
+      properties:
+        value:
+          type: integer
+          enum: [-1, 1]
+      required: [value]
+
+    SimpleSuccess:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required: [success]
+
+paths:
+  /api/settings:
+    get:
+      tags: [Settings]
+      summary: Récupère les paramètres globaux
+      responses:
+        "200":
+          description: Paramètres globaux
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+
+  /api/admin/registrations:
+    post:
+      tags: [Settings]
+      summary: Ouvre ou ferme les inscriptions utilisateurs
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToggleRegistrationsRequest"
+      responses:
+        "200":
+          description: État des inscriptions mis à jour
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  registrationsClosed:
+                    type: boolean
+        "401":
+          description: Non authentifié ou token invalide
+        "403":
+          description: Rôle admin requis
+
+  /api/register:
+    post:
+      tags: [Auth]
+      summary: Inscription d'un nouvel utilisateur
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: Utilisateur créé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleSuccess"
+        "400":
+          description: Email déjà utilisé ou données invalides
+        "403":
+          description: Inscriptions fermées
+
+  /api/login:
+    post:
+      tags: [Auth]
+      summary: Connexion d'un utilisateur
+      description: >
+        Retourne l'utilisateur et pose un cookie HTTPOnly `token` contenant le JWT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authentification réussie
+          headers:
+            Set-Cookie:
+              description: Cookie HTTPOnly contenant le token JWT
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  user:
+                    $ref: "#/components/schemas/User"
+        "400":
+          description: Identifiants invalides
+
+  /api/logout:
+    post:
+      tags: [Auth]
+      summary: Déconnexion (suppression du cookie JWT)
+      responses:
+        "200":
+          description: Déconnexion réussie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleSuccess"
+
+  /api/admin/votes:
+    get:
+      tags: [Votes (Admin)]
+      summary: Liste tous les votes
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Liste des votes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vote"
+        "401":
+          description: Non authentifié
+        "403":
+          description: Non autorisé (admin requis)
+
+    post:
+      tags: [Votes (Admin)]
+      summary: Crée un nouveau vote (session de vote)
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVoteRequest"
+      responses:
+        "201":
+          description: Vote créé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vote"
+        "400":
+          description: Données invalides
+        "401":
+          description: Non authentifié
+        "403":
+          description: Non autorisé (admin requis)
+
+  /api/admin/votes/{id}:
+    put:
+      tags: [Votes (Admin)]
+      summary: Met à jour un vote existant
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVoteRequest"
+      responses:
+        "200":
+          description: Vote mis à jour
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vote"
+        "404":
+          description: Vote introuvable
+        "401":
+          description: Non authentifié
+        "403":
+          description: Non autorisé (admin requis)
+
+    delete:
+      tags: [Votes (Admin)]
+      summary: Supprime un vote et ses actions associées
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Vote supprimé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleSuccess"
+        "404":
+          description: Vote introuvable
+        "401":
+          description: Non authentifié
+        "403":
+          description: Non autorisé (admin requis)
+
+  /api/admin/votes/{id}/open:
+    post:
+      tags: [Votes (Admin)]
+      summary: Ouvre un vote (un seul vote ouvert à la fois)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Vote ouvert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vote"
+        "400":
+          description: Un autre vote est déjà ouvert
+        "404":
+          description: Vote introuvable
+
+  /api/admin/votes/{id}/close:
+    post:
+      tags: [Votes (Admin)]
+      summary: Ferme un vote
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Vote fermé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vote"
+        "404":
+          description: Vote introuvable
+
+  /api/votes/current:
+    get:
+      tags: [Votes (User)]
+      summary: Récupère le vote actuellement ouvert et ses statistiques
+      responses:
+        "200":
+          description: Vote ouvert et données associées, ou null s'il n'y en a pas
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/VoteWithStats"
+                  - type: object
+
+  /api/votes/{id}/actions:
+    get:
+      tags: [Votes (User)]
+      summary: Récupère toutes les actions d'un vote donné (timeline)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Liste des actions pour ce vote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoteActionsResponse"
+        "404":
+          description: Vote introuvable
+
+  /api/votes/{id}/result:
+    get:
+      tags: [Votes (User)]
+      summary: Récupère le résultat final d'un vote
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Résultat du vote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoteResult"
+        "404":
+          description: Vote introuvable
+
+  /api/vote:
+    post:
+      tags: [Votes (User)]
+      summary: Ajoute une action de vote (+1 ou -1) pour le vote ouvert
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoteRequest"
+      responses:
+        "200":
+          description: Vote enregistré
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleSuccess"
+        "400":
+          description: Pas de vote ouvert ou valeur de vote invalide
+        "401":
+          description: Non authentifié
+        "403":
+          description: Déjà voté aujourd'hui pour ce vote
