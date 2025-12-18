@@ -1,4 +1,5 @@
 const express = require("express");
+const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -6,17 +7,20 @@ const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const swaggerUi = require("swagger-ui-express");
 const YAML = require("yamljs");
+const path = require("path");
 
 const app = express();
+app.use(cors());
 app.use(bodyParser.json());
 app.use(cookieParser());
 
-const db = new sqlite3.Database("./db.sqlite");
+const db = new sqlite3.Database(path.join(__dirname, "db.sqlite"));
 const swaggerDocument = YAML.load("./openapi.yaml");
 
 // --------------------------
 // Helpers
 // --------------------------
+
 function query(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => {
@@ -54,7 +58,6 @@ function auth(requiredRole = null) {
         : null;
 
     const token = tokenFromCookie || tokenFromHeader;
-
     if (!token) return res.status(401).json({ error: "Unauthorized" });
 
     try {
@@ -66,10 +69,37 @@ function auth(requiredRole = null) {
       }
 
       next();
-    } catch (e) {
+    } catch {
       res.status(401).json({ error: "Invalid token" });
     }
   };
+}
+
+// --------------------------
+// Bootstrap admin
+// --------------------------
+
+async function ensureAdmin() {
+  const email = "admin@example.com";
+  const password = "admin";
+
+  const existing = await getOne("SELECT id FROM users WHERE email = ?", [
+    email,
+  ]);
+
+  if (existing) {
+    console.log("ℹ️ Admin already exists");
+    return;
+  }
+
+  const hash = await bcrypt.hash(password, 10);
+
+  await exec(
+    "INSERT INTO users (email, password, role, createdAt) VALUES (?, ?, 'admin', datetime('now'))",
+    [email, hash]
+  );
+
+  console.log("✅ Admin created:", email);
 }
 
 // --------------------------
@@ -78,11 +108,9 @@ function auth(requiredRole = null) {
 
 app.get("/api/settings", async (req, res) => {
   const rows = await query("SELECT key, value FROM settings");
-  const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  res.json(settings);
+  res.json(Object.fromEntries(rows.map((r) => [r.key, r.value])));
 });
 
-// Admin: toggle registrations
 app.post("/api/admin/registrations", auth("admin"), async (req, res) => {
   const value = req.body.value ? "true" : "false";
   await exec("UPDATE settings SET value=? WHERE key='registrationsClosed'", [
@@ -92,40 +120,36 @@ app.post("/api/admin/registrations", auth("admin"), async (req, res) => {
 });
 
 // --------------------------
-// Auth / Users
+// Auth
 // --------------------------
 
-// Register
 app.post("/api/register", async (req, res) => {
   const { email, password } = req.body;
-
-  if (!email || !password) {
+  if (!email || !password)
     return res.status(400).json({ error: "Email and password are required" });
-  }
 
   const settings = await getOne(
     "SELECT value FROM settings WHERE key='registrationsClosed'"
   );
-  if (settings && settings.value === "true") {
+  if (settings?.value === "true")
     return res.status(403).json({ error: "Registrations are closed" });
-  }
 
-  const hashed = await bcrypt.hash(password, 10);
+  const hash = await bcrypt.hash(password, 10);
 
   try {
     await exec(
       "INSERT INTO users (email, password, role, createdAt) VALUES (?, ?, 'user', datetime('now'))",
-      [email, hashed]
+      [email, hash]
     );
     res.json({ success: true });
-  } catch (e) {
-    return res.status(400).json({ error: "Email already exists" });
+  } catch {
+    res.status(400).json({ error: "Email already exists" });
   }
 });
 
-// Login
 app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
+  const password = req.body.password?.trim();
 
   const user = await getOne("SELECT * FROM users WHERE email = ?", [email]);
   if (!user) return res.status(400).json({ error: "Invalid credentials" });
@@ -141,9 +165,8 @@ app.post("/api/login", async (req, res) => {
 
   res.cookie("token", token, {
     httpOnly: true,
-    secure: false, // true if HTTPS
     sameSite: "lax",
-    maxAge: 2 * 60 * 60 * 1000, // 2h
+    maxAge: 2 * 60 * 60 * 1000,
   });
 
   res.json({
@@ -152,256 +175,29 @@ app.post("/api/login", async (req, res) => {
   });
 });
 
-// Logout
 app.post("/api/logout", (req, res) => {
   res.clearCookie("token");
   res.json({ success: true });
 });
 
 // --------------------------
-// Votes (sessions) – Admin
+// Swagger
 // --------------------------
 
-// List all votes with status
-app.get("/api/admin/votes", auth("admin"), async (req, res) => {
-  const rows = await query(
-    "SELECT * FROM votes ORDER BY datetime(createdAt) DESC"
-  );
-  res.json(rows);
-});
-
-// Create a vote (scheduled by default)
-app.post("/api/admin/votes", auth("admin"), async (req, res) => {
-  const { title, startsAt, endsAt } = req.body;
-
-  if (!title || !startsAt || !endsAt) {
-    return res
-      .status(400)
-      .json({ error: "title, startsAt and endsAt are required" });
-  }
-
-  const now = new Date().toISOString();
-
-  const result = await exec(
-    `
-    INSERT INTO votes (title, startsAt, endsAt, status, createdAt, updatedAt)
-    VALUES (?, ?, ?, 'scheduled', ?, ?)
-  `,
-    [title, startsAt, endsAt, now, now]
-  );
-
-  const vote = await getOne("SELECT * FROM votes WHERE id = ?", [
-    result.lastID,
-  ]);
-  res.status(201).json(vote);
-});
-
-// Update vote (title / dates only)
-app.put("/api/admin/votes/:id", auth("admin"), async (req, res) => {
-  const { id } = req.params;
-  const { title, startsAt, endsAt } = req.body;
-
-  const existing = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  if (!existing) return res.status(404).json({ error: "Vote not found" });
-
-  const newTitle = title ?? existing.title;
-  const newStartsAt = startsAt ?? existing.startsAt;
-  const newEndsAt = endsAt ?? existing.endsAt;
-  const now = new Date().toISOString();
-
-  await exec(
-    `
-    UPDATE votes
-    SET title = ?, startsAt = ?, endsAt = ?, updatedAt = ?
-    WHERE id = ?
-  `,
-    [newTitle, newStartsAt, newEndsAt, now, id]
-  );
-
-  const updated = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  res.json(updated);
-});
-
-// Delete vote (and its actions)
-app.delete("/api/admin/votes/:id", auth("admin"), async (req, res) => {
-  const { id } = req.params;
-
-  await exec("DELETE FROM vote_actions WHERE voteId = ?", [id]);
-  const result = await exec("DELETE FROM votes WHERE id = ?", [id]);
-
-  if (result.changes === 0) {
-    return res.status(404).json({ error: "Vote not found" });
-  }
-
-  res.json({ success: true });
-});
-
-// Open a vote – only one can be open at a time
-app.post("/api/admin/votes/:id/open", auth("admin"), async (req, res) => {
-  const { id } = req.params;
-
-  const existing = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  if (!existing) return res.status(404).json({ error: "Vote not found" });
-
-  const openVote = await getOne(
-    "SELECT * FROM votes WHERE status = 'open' AND id != ?",
-    [id]
-  );
-  if (openVote) {
-    return res.status(400).json({ error: "Another vote is already open" });
-  }
-
-  const now = new Date().toISOString();
-
-  await exec(
-    `
-    UPDATE votes
-    SET status = 'open', updatedAt = ?, closedAt = NULL
-    WHERE id = ?
-  `,
-    [now, id]
-  );
-
-  const updated = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  res.json(updated);
-});
-
-// Close a vote
-app.post("/api/admin/votes/:id/close", auth("admin"), async (req, res) => {
-  const { id } = req.params;
-
-  const existing = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  if (!existing) return res.status(404).json({ error: "Vote not found" });
-
-  const now = new Date().toISOString();
-
-  await exec(
-    `
-    UPDATE votes
-    SET status = 'closed', updatedAt = ?, closedAt = ?
-    WHERE id = ?
-  `,
-    [now, now, id]
-  );
-
-  const updated = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  res.json(updated);
-});
-
-// --------------------------
-// Votes – côté utilisateur
-// --------------------------
-
-// Get current open vote
-app.get("/api/votes/current", async (req, res) => {
-  const vote = await getOne("SELECT * FROM votes WHERE status = 'open'");
-
-  if (!vote) {
-    return res.json(null);
-  }
-
-  const actions = await query(
-    "SELECT value, createdAt FROM vote_actions WHERE voteId = ? ORDER BY datetime(createdAt) ASC",
-    [vote.id]
-  );
-  const total = actions.reduce((sum, a) => sum + a.value, 0);
-
-  res.json({
-    vote,
-    total,
-    actions,
-  });
-});
-
-// Get full list of actions for a vote
-app.get("/api/votes/:id/actions", async (req, res) => {
-  const { id } = req.params;
-
-  const vote = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  if (!vote) return res.status(404).json({ error: "Vote not found" });
-
-  const actions = await query(
-    `
-    SELECT id, userId, value, createdAt
-    FROM vote_actions
-    WHERE voteId = ?
-    ORDER BY datetime(createdAt) ASC
-  `,
-    [id]
-  );
-
-  res.json({ vote, actions });
-});
-
-// Get final result for a vote
-app.get("/api/votes/:id/result", async (req, res) => {
-  const { id } = req.params;
-
-  const vote = await getOne("SELECT * FROM votes WHERE id = ?", [id]);
-  if (!vote) return res.status(404).json({ error: "Vote not found" });
-
-  const actions = await query(
-    "SELECT value FROM vote_actions WHERE voteId = ?",
-    [id]
-  );
-  const total = actions.reduce((sum, a) => sum + a.value, 0);
-
-  res.json({ voteId: id, total, actionsCount: actions.length });
-});
-
-// User vote (plusieurs actions possibles, mais pas deux fois de suite la même)
-app.post("/api/vote", auth(), async (req, res) => {
-  const { value } = req.body;
-
-  if (![+1, -1].includes(value)) {
-    return res.status(400).json({ error: "Invalid vote value" });
-  }
-
-  const vote = await getOne("SELECT * FROM votes WHERE status = 'open'");
-  if (!vote) {
-    return res.status(400).json({ error: "No open vote" });
-  }
-
-  const lastAction = await getOne(
-    `
-    SELECT value FROM vote_actions
-    WHERE voteId = ?
-      AND userId = ?
-    ORDER BY datetime(createdAt) DESC
-    LIMIT 1
-  `,
-    [vote.id, req.user.id]
-  );
-
-  if (lastAction && lastAction.value === value) {
-    return res.status(403).json({
-      error: "Cannot repeat same action consecutively",
-    });
-  }
-
-  await exec(
-    `
-    INSERT INTO vote_actions (voteId, userId, value, createdAt)
-    VALUES (?, ?, ?, datetime('now'))
-  `,
-    [vote.id, req.user.id, value]
-  );
-
-  res.json({ success: true });
-});
-
-// Route Swagger UI
 app.use(
   "/api/docs",
   swaggerUi.serve,
-  swaggerUi.setup(swaggerDocument, {
-    explorer: true,
-  })
+  swaggerUi.setup(swaggerDocument, { explorer: true })
 );
 
 // --------------------------
 // Server
 // --------------------------
-app.listen(3000, () => {
-  console.log("API running on http://localhost:3000");
-});
+
+(async () => {
+  await ensureAdmin();
+
+  app.listen(3000, () => {
+    console.log("API running on http://localhost:3000");
+  });
+})();
