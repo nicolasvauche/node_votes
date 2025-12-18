@@ -5,12 +5,12 @@ x-swagger-ui:
 
 info:
   title: Mini API - Utilisateurs & Votes
-  version: 1.0.0
+  version: 1.1.0
   description: >
-    API pédagogique pour gérer des utilisateurs (inscription / login) et des sessions de vote
-    avec historique des actions. Authentification par JWT stocké dans un cookie HTTPOnly.
-    Un utilisateur peut effectuer plusieurs actions de vote, mais ne peut pas répéter deux fois
-    consécutivement la même action (+1 ou -1).
+    API pédagogique pour gérer des utilisateurs (inscription / login) et des sessions de vote.
+    Authentification par JWT stocké dans un cookie HTTPOnly.
+    Le vote côté utilisateur fonctionne en "position courante" : chaque utilisateur a une position (-1, 0, +1)
+    sur le vote ouvert. Le score global est la somme des positions courantes.
 
 servers:
   - url: http://localhost:3000
@@ -24,7 +24,7 @@ tags:
   - name: Votes (Admin)
     description: Gestion des sessions de vote côté administrateur
   - name: Votes (User)
-    description: Actions de vote côté utilisateur
+    description: Vote côté utilisateur (position courante)
 
 components:
   securitySchemes:
@@ -37,34 +37,23 @@ components:
     User:
       type: object
       properties:
-        id:
-          type: integer
-        email:
-          type: string
-          format: email
-        role:
-          type: string
-          enum: [user, admin]
+        id: { type: integer }
+        email: { type: string, format: email }
+        role: { type: string, enum: [user, admin] }
       required: [id, email, role]
 
     RegisterRequest:
       type: object
       properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
+        email: { type: string, format: email }
+        password: { type: string }
       required: [email, password]
 
     LoginRequest:
       type: object
       properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
+        email: { type: string, format: email }
+        password: { type: string }
       required: [email, password]
 
     Settings:
@@ -77,45 +66,26 @@ components:
     Vote:
       type: object
       properties:
-        id:
-          type: integer
-        title:
-          type: string
-        startsAt:
-          type: string
-          format: date-time
-        endsAt:
-          type: string
-          format: date-time
-        status:
-          type: string
-          enum: [scheduled, open, closed]
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-        closedAt:
-          type: string
-          format: date-time
-          nullable: true
+        id: { type: integer }
+        title: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        status: { type: string, enum: [scheduled, open, closed] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time, nullable: true }
 
     VoteAction:
       type: object
       properties:
-        id:
-          type: integer
-        voteId:
-          type: integer
-        userId:
-          type: integer
+        id: { type: integer }
+        voteId: { type: integer }
+        userId: { type: integer }
         value:
           type: integer
-          description: +1 ou -1
-        createdAt:
-          type: string
-          format: date-time
+          description: -1, 0, +1 (0 = annulation)
+          enum: [-1, 0, 1]
+        createdAt: { type: string, format: date-time }
 
     VoteWithStats:
       type: object
@@ -124,14 +94,21 @@ components:
           $ref: "#/components/schemas/Vote"
         total:
           type: integer
-          description: Somme des valeurs de toutes les actions
+          description: Somme des positions courantes (vote_positions)
+        myVote:
+          type: integer
+          nullable: true
+          description: Position courante de l'utilisateur connecté (-1, 0, +1). null si non authentifié.
+          enum: [-1, 0, 1]
         actions:
           type: array
+          description: Journal optionnel des actions (timeline)
           items:
             type: object
             properties:
               value:
                 type: integer
+                enum: [-1, 0, 1]
               createdAt:
                 type: string
                 format: date-time
@@ -149,58 +126,46 @@ components:
     VoteResult:
       type: object
       properties:
-        voteId:
+        voteId: { type: integer }
+        total: { type: integer }
+        votersCount:
           type: integer
-        total:
-          type: integer
-        actionsCount:
-          type: integer
+          description: Nombre d'utilisateurs ayant une position pour ce vote (vote_positions)
 
     ToggleRegistrationsRequest:
       type: object
       properties:
-        value:
-          type: boolean
+        value: { type: boolean }
       required: [value]
 
     CreateVoteRequest:
       type: object
       properties:
-        title:
-          type: string
-        startsAt:
-          type: string
-          format: date-time
-        endsAt:
-          type: string
-          format: date-time
+        title: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
       required: [title, startsAt, endsAt]
 
     UpdateVoteRequest:
       type: object
       properties:
-        title:
-          type: string
-        startsAt:
-          type: string
-          format: date-time
-        endsAt:
-          type: string
-          format: date-time
+        title: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
 
     VoteRequest:
       type: object
       properties:
         value:
           type: integer
-          enum: [-1, 1]
+          enum: [-1, 0, 1]
+          description: -1, 0 (annuler), +1
       required: [value]
 
     SimpleSuccess:
       type: object
       properties:
-        success:
-          type: boolean
+        success: { type: boolean }
       required: [success]
 
 paths:
@@ -236,10 +201,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  success:
-                    type: boolean
-                  registrationsClosed:
-                    type: boolean
+                  success: { type: boolean }
+                  registrationsClosed: { type: boolean }
         "401":
           description: Non authentifié ou token invalide
         "403":
@@ -292,8 +255,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  success:
-                    type: boolean
+                  success: { type: boolean }
                   user:
                     $ref: "#/components/schemas/User"
         "400":
@@ -366,8 +328,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       requestBody:
         required: true
         content:
@@ -383,22 +344,17 @@ paths:
                 $ref: "#/components/schemas/Vote"
         "404":
           description: Vote introuvable
-        "401":
-          description: Non authentifié
-        "403":
-          description: Non autorisé (admin requis)
 
     delete:
       tags: [Votes (Admin)]
-      summary: Supprime un vote et ses actions associées
+      summary: Supprime un vote, ses positions et son journal
       security:
         - cookieAuth: []
       parameters:
         - name: id
           in: path
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
         "200":
           description: Vote supprimé
@@ -408,10 +364,6 @@ paths:
                 $ref: "#/components/schemas/SimpleSuccess"
         "404":
           description: Vote introuvable
-        "401":
-          description: Non authentifié
-        "403":
-          description: Non autorisé (admin requis)
 
   /api/admin/votes/{id}/open:
     post:
@@ -423,8 +375,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
         "200":
           description: Vote ouvert
@@ -447,8 +398,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
         "200":
           description: Vote fermé
@@ -462,10 +412,10 @@ paths:
   /api/votes/current:
     get:
       tags: [Votes (User)]
-      summary: Récupère le vote actuellement ouvert et ses statistiques
+      summary: Récupère le vote actuellement ouvert, le score et la position courante éventuelle
       responses:
         "200":
-          description: Vote ouvert et données associées, ou null s'il n'y en a pas
+          description: Vote ouvert (ou objet vide)
           content:
             application/json:
               schema:
@@ -476,13 +426,12 @@ paths:
   /api/votes/{id}/actions:
     get:
       tags: [Votes (User)]
-      summary: Récupère toutes les actions d'un vote donné (timeline)
+      summary: Récupère le journal des actions d'un vote (timeline optionnelle)
       parameters:
         - name: id
           in: path
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
         "200":
           description: Liste des actions pour ce vote
@@ -496,13 +445,12 @@ paths:
   /api/votes/{id}/result:
     get:
       tags: [Votes (User)]
-      summary: Récupère le résultat final d'un vote
+      summary: Récupère le résultat (score basé sur les positions courantes)
       parameters:
         - name: id
           in: path
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
         "200":
           description: Résultat du vote
@@ -516,10 +464,10 @@ paths:
   /api/vote:
     post:
       tags: [Votes (User)]
-      summary: Ajoute une action de vote (+1 ou -1) pour le vote ouvert
+      summary: Définit la position courante (-1, 0, +1) pour le vote ouvert
       description: >
-        Un utilisateur peut voter plusieurs fois pour un même vote,
-        mais ne peut pas répéter deux fois de suite la même action.
+        value = -1 (désapprouver), 0 (annuler), +1 (approuver).
+        Le score global est calculé à partir des positions courantes (vote_positions).
       security:
         - cookieAuth: []
       requestBody:
@@ -530,14 +478,18 @@ paths:
               $ref: "#/components/schemas/VoteRequest"
       responses:
         "200":
-          description: Vote enregistré
+          description: Position enregistrée
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SimpleSuccess"
+                type: object
+                properties:
+                  success: { type: boolean }
+                  total: { type: integer }
+                  myVote:
+                    type: integer
+                    enum: [-1, 0, 1]
         "400":
-          description: Pas de vote ouvert ou valeur de vote invalide
+          description: Pas de vote ouvert ou valeur invalide
         "401":
           description: Non authentifié
-        "403":
-          description: Impossible de répéter deux fois la même action consécutivement

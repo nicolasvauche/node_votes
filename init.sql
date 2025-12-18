@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS vote_positions;
+
 DROP TABLE IF EXISTS vote_actions;
 
 DROP TABLE IF EXISTS votes;
@@ -27,11 +29,23 @@ CREATE TABLE votes (
     closedAt TEXT
 );
 
+CREATE TABLE vote_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    voteId INTEGER NOT NULL,
+    userId INTEGER NOT NULL,
+    value INTEGER NOT NULL CHECK (value IN (-1, 0, 1)),
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    FOREIGN KEY (voteId) REFERENCES votes (id),
+    FOREIGN KEY (userId) REFERENCES users (id),
+    UNIQUE (voteId, userId)
+);
+
 CREATE TABLE vote_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     voteId INTEGER NOT NULL,
     userId INTEGER NOT NULL,
-    value INTEGER NOT NULL,
+    value INTEGER NOT NULL CHECK (value IN (-1, 0, 1)),
     createdAt TEXT NOT NULL,
     FOREIGN KEY (voteId) REFERENCES votes (id),
     FOREIGN KEY (userId) REFERENCES users (id)
